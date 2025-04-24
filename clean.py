@@ -12,6 +12,8 @@ DROP_PRE_2000 = True     # set to True to drop all rows before year 2000
 # toggle control subset filter
 SUBSET_CONTROLS = False  # set to True to keep only host counties and selected controls
 
+DROP_INTERMEDIATE_COLUMNS = True
+
 # list of FIPS codes to include as controls when SUBSET_CONTROLS=True
 control_fips = [
     '24510', '36029', '47037', '55009', '53033', '42003', '39035', '42101', '39061', '17031', '37119', '25025', '24033', '29095', 
@@ -22,6 +24,7 @@ df1 = pd.read_csv(file1, dtype=str)
 df2 = pd.read_csv(file2, dtype=str)
 df  = pd.concat([df1, df2], ignore_index=True)
 total = len(df)
+
 
 # 1.a initialize host_year as NaN
 df['host_year'] = np.nan
@@ -78,7 +81,26 @@ if SUBSET_CONTROLS:
 else:
     removed_subset = 0
 
-# 4. report
+# 4. compute quarterly average employment
+df_clean['empl_qtr'] = df_clean[
+    ['month1_emplvl', 'month2_emplvl', 'month3_emplvl']
+].mean(axis=1)
+
+if DROP_INTERMEDIATE_COLUMNS:
+    df_clean.drop(
+    ['month1_emplvl', 'month2_emplvl', 'month3_emplvl', 'area_title'],
+    axis=1,
+    inplace=True
+)
+
+# 5. compute event time for host cities (quarter-based)
+df_clean['qtr'] = df_clean['qtr'].astype(int)
+df_clean['event_time'] = (
+    (df_clean['year'] - df_clean['host_year']) * 4
+    + (df_clean['qtr'] - 1)
+)
+
+# 6. report
 remaining = len(df_clean)
 print(f"Removed {removed_area} rows without 'county' or 'parish' in title")
 print(f"Removed {removed_zero} rows with zero in any value column")
@@ -91,12 +113,16 @@ print(f"{remaining} rows remain out of {total}")
 print("\n----------\n")
 host_counts = (
     df_clean[df_clean['host_year'].notna()]
-    .groupby(['area_fips','area_title'])['host_year']
-    .count()
-    .reset_index(name='n_rows')
-    .sort_values('n_rows', ascending=False)
+      .groupby('area_fips')['host_year']
+      .count()
+      .reset_index(name='n_rows')
+      .sort_values('n_rows', ascending=False)
 )
 print(host_counts)
 
-# 5. save (original files untouched)
+# 7. sort so all rows for each FIPS are together (and within each FIPS, by year→quarter)
+df_clean.sort_values(by=['area_fips', 'year', 'qtr'], inplace=True)
+df_clean.reset_index(drop=True, inplace=True)
+
+# 8. save (original files untouched)
 df_clean.to_csv(out_file, index=False)
